@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.13">
+  <DUT Name="toHMI" Id="{646f5d42-beaf-41cf-b7b7-a5854900543f}">
+    <Declaration><![CDATA[TYPE toHMI :
+STRUCT
+	stsController		: INT;	// running, stopped, paused and faulted
+	stsPartSelected		: INT;	// part number selected
+	stsState		: INT;	// state/step of program
+END_STRUCT
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>

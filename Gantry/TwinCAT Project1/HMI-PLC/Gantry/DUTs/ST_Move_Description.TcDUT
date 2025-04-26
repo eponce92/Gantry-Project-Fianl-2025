@@ -1,0 +1,15 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.13">
+  <DUT Name="ST_Move_Description" Id="{85c9793c-c72b-476c-98f8-1c1820b8b7ba}">
+    <Declaration><![CDATA[{attribute 'OPC.UA.DA' := '1'}
+TYPE ST_Move_Description :
+STRUCT
+	accel: LREAL; 
+	decel: LREAL; 
+	speed: LREAL; 
+	max_torque: LREAL; 
+END_STRUCT
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>

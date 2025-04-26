@@ -1,0 +1,22 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.13">
+  <DUT Name="ST_Gantry_Status" Id="{85c9793c-c72b-476c-98f8-1c1820b8b7bd}">
+    <Declaration><![CDATA[{attribute 'OPC.UA.DA' := '1'}
+TYPE ST_Gantry_Status :
+STRUCT
+	// State
+	state: E_Gantry_State; // current state
+	state_text: STRING; // text display of state
+	
+	// status flags, only what state doesnt tell us
+	all_homed: BOOL; // all axes found home
+	at_position: BOOL; // within tolerance of target
+	has_error: BOOL; // true if any servo is in error state
+	
+	// Current position
+	position: ST_Position; // where gantry is now
+END_STRUCT
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>

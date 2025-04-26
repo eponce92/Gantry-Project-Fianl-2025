@@ -1,0 +1,41 @@
+### TwinCAT 3 ###
+# PLC sources & backups
+*.plcproj.bak
+*.plcproj.orig
+*.tpy
+*.tclrs
+*.library
+*.compiled-library
+*.compileinfo
+*.asm
+*.core
+LineIDs.dbg*
+# C++ / shared‐type artefacts – keep *.tmc only if you're **not**
+# sharing data types or writing TcCom/C++ modules
+*.tmc
+*.tmcRefac
+
+# TwinCAT project & solution backups
+*.tsproj.bak
+*.tsproj.b?k
+*.tsproj.orig
+*.xti.bak
+*.xti.bk?
+*.xtv*
+# Multi-user cache
+**/.TcGit/
+
+# Large auto-generated folders
+**/_Boot/
+**/_CompileInfo/
+**/_Libraries/
+**/_ModuleInstall/
+**/_Deployment/
+**/_Repository/
+
+### Visual Studio (excerpt) ###
+**/.vs/
+*.suo
+*.user
+*.~u
+*.project.~u 

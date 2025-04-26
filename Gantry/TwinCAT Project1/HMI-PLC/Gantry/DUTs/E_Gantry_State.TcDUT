@@ -1,0 +1,19 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.13">
+  <DUT Name="E_Gantry_State" Id="{85c9793c-c72b-476c-98f8-1c1820b8b7bc}">
+    <Declaration><![CDATA[TYPE E_Gantry_State :
+(
+    DISABLED := 0,      // all motors off
+    ENABLING := 10,     // powering up
+    HOME_NEEDED := 15,  // on but position unknown
+    HOMING := 20,       // finding home
+    READY := 30,        // ready for commands
+    MOVING := 40,       // moving to target
+    STOPPING := 45,     // slowing down
+    ERRORED := 100,     // something wrong
+    RESETTING := 110    // clearing errors
+);
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>

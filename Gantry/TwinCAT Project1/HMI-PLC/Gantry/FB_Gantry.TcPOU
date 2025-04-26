@@ -1,0 +1,354 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.13">
+  <POU Name="FB_Gantry" Id="{b0f6d300-a9fc-405e-9987-dc870b2ead4b}" SpecialFunc="None">
+    <Declaration><![CDATA[{attribute 'hide_all_locals'}
+(* 
+simple implementation of a 2 axis gantry 
+simulating most things for now, pending to do mapping to real servo drive tags,
+do specific behaivor handling based on servo model and error handling
+*)
+
+FUNCTION_BLOCK FB_Gantry
+VAR_IN_OUT
+	// control inputs
+
+	pcmd_enable: BOOL; // power up all axes
+	pcmd_disable: BOOL; // shut down all axes
+	pcmd_home: BOOL; // find home for all axes
+	pcmd_reset_error: BOOL; // clear errors
+	pcmd_move_absolute: BOOL; // go to exact position
+	pcmd_stop: BOOL; // stop moving
+END_VAR
+VAR_INPUT	
+	// setup options
+	cfg_simulation_mode: BOOL := TRUE; // just simulate no hardware
+	cfg_position_tolerance: LREAL := 0.05; // how close is close enough mm
+	
+	// gantry limits and home position
+	cfg_max_x: LREAL := 1000.0; // max x position in mm
+	cfg_max_y: LREAL := 1000.0; // max y position in mm
+	cfg_home_offset_x: LREAL := 10.0; // home position x offset in mm
+	cfg_home_offset_y: LREAL := 10.0; // home position y offset in mm
+	
+	// movement targets
+	inp_target_position: ST_Position; // where to go
+	inp_move_description: ST_Move_Description; // how fast to go
+END_VAR
+
+VAR_OUTPUT
+	// status info
+	sts: ST_Gantry_Status; // everything about current state
+END_VAR
+
+VAR
+	// motion profiles for each axis
+	internal_move_desc_x: ST_Move_Description;
+	internal_move_desc_y: ST_Move_Description;
+	
+	// the actual motors
+	x_axis: FB_Servo;
+	y_axis: FB_Servo;
+	
+	// x-axis controls
+	cmd_x_enable: BOOL;
+	cmd_x_disable: BOOL;
+	cmd_x_home: BOOL;
+	cmd_x_reset_error: BOOL;
+	cmd_x_move_absolute: BOOL;
+	cmd_x_stop: BOOL;
+	
+	// y-axis controls
+	cmd_y_enable: BOOL;
+	cmd_y_disable: BOOL;
+	cmd_y_home: BOOL;
+	cmd_y_reset_error: BOOL;
+	cmd_y_move_absolute: BOOL;
+	cmd_y_stop: BOOL;
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[// update status first to get current axis states
+Update_Status();
+
+// use same speed settings for all axes
+internal_move_desc_x := inp_move_description;
+internal_move_desc_y := inp_move_description;
+
+// check errors first using the has_error flag
+IF sts.has_error AND NOT pcmd_reset_error THEN
+    // stuck in error until reset
+    sts.state := E_Gantry_State.ERRORED;
+    
+// nothing else happens while in error
+ELSE
+    // main state machine
+    CASE sts.state OF
+        E_Gantry_State.DISABLED:
+            // when disabled we can only enable
+            IF pcmd_enable AND NOT sts.has_error THEN
+                sts.state := E_Gantry_State.ENABLING;
+            END_IF
+            
+        E_Gantry_State.ENABLING:
+            // turn on all motors
+            cmd_x_enable := TRUE;
+            cmd_y_enable := TRUE;
+            
+            // once all are not disabled we need to find home
+            IF x_axis.sts_State <> E_Servo_State.DISABLED AND 
+               y_axis.sts_State <> E_Servo_State.DISABLED THEN
+                sts.state := E_Gantry_State.HOME_NEEDED;
+            END_IF
+            
+        E_Gantry_State.HOME_NEEDED:
+            // start homing when requested
+            IF pcmd_home THEN
+                sts.state := E_Gantry_State.HOMING;
+                
+                // tell all axes to find home
+                cmd_x_home := TRUE;
+                cmd_y_home := TRUE;
+            ELSIF pcmd_disable THEN
+                sts.state := E_Gantry_State.DISABLED;
+                
+                // turn everything off
+                cmd_x_disable := TRUE;
+                cmd_y_disable := TRUE;
+            END_IF
+            
+        E_Gantry_State.HOMING:
+            // handle stop during homing
+            IF pcmd_stop THEN
+                sts.state := E_Gantry_State.HOME_NEEDED;
+                
+                // tell all axes to halt
+                cmd_x_stop := TRUE;
+                cmd_y_stop := TRUE;
+            
+            // when all axes found home good to go
+            ELSIF sts.all_homed AND 
+                  x_axis.sts_State <> E_Servo_State.MOVING AND 
+                  y_axis.sts_State <> E_Servo_State.MOVING THEN
+                
+                // move to home offset position if homed
+                sts.state := E_Gantry_State.MOVING;
+                
+                // set target to home offset
+                inp_target_position.x := cfg_home_offset_x;
+                inp_target_position.y := cfg_home_offset_y;
+                
+                // move to home offset
+                cmd_x_move_absolute := TRUE;
+                cmd_y_move_absolute := TRUE;
+            END_IF
+            
+        E_Gantry_State.READY:
+            // handle shutdown request
+            IF pcmd_disable THEN
+                sts.state := E_Gantry_State.DISABLED;
+                
+                // turn everything off
+                cmd_x_disable := TRUE;
+                cmd_y_disable := TRUE;
+            
+            // rehome if needed
+            ELSIF pcmd_home THEN
+                sts.state := E_Gantry_State.HOMING;
+                
+                // tell all axes to find home
+                cmd_x_home := TRUE;
+                cmd_y_home := TRUE;
+                
+            // go to exact position
+            ELSIF pcmd_move_absolute AND sts.all_homed THEN
+                // check if position is within limits
+                IF inp_target_position.x > cfg_max_x OR inp_target_position.x < 0 OR
+                   inp_target_position.y > cfg_max_y OR inp_target_position.y < 0 THEN
+                    // position out of bounds - do not move
+                    // could set an error flag here
+                ELSE
+                    // check if already there
+                    sts.at_position := 
+                        x_axis.sts.at_position AND 
+                        y_axis.sts.at_position;
+                    
+                    IF sts.at_position THEN
+                        // already there nothing to do
+                        sts.at_position := TRUE;
+                    ELSE
+                        sts.state := E_Gantry_State.MOVING;
+                        sts.at_position := FALSE;
+                        
+                        // tell all axes where to go
+                        cmd_x_move_absolute := TRUE;
+                        cmd_y_move_absolute := TRUE;
+                    END_IF
+                END_IF
+            END_IF
+            
+        E_Gantry_State.MOVING:
+            // handle stop while moving
+            IF pcmd_stop THEN
+                sts.state := E_Gantry_State.STOPPING;
+                
+                // tell all axes to halt
+                cmd_x_stop := TRUE;
+                cmd_y_stop := TRUE;
+            
+            // when motion complete back to ready
+            ELSIF x_axis.sts_State <> E_Servo_State.MOVING AND 
+                  y_axis.sts_State <> E_Servo_State.MOVING THEN
+                sts.state := E_Gantry_State.READY;
+            END_IF
+            
+        E_Gantry_State.STOPPING:
+            // wait until fully stopped
+            IF x_axis.sts_State <> E_Servo_State.MOVING AND 
+               y_axis.sts_State <> E_Servo_State.MOVING THEN
+                sts.state := E_Gantry_State.READY;
+            END_IF
+            
+        E_Gantry_State.ERRORED:
+            // reset errors when commanded
+            IF pcmd_reset_error THEN
+                sts.state := E_Gantry_State.RESETTING;
+                
+                // tell all axes to clear errors
+                cmd_x_reset_error := TRUE;
+                cmd_y_reset_error := TRUE;
+            END_IF
+            
+        E_Gantry_State.RESETTING:
+            // when all errors cleared go to disabled state
+            IF NOT sts.has_error THEN
+                sts.state := E_Gantry_State.DISABLED;
+            END_IF
+    END_CASE;
+END_IF;
+
+// now actually run each motor
+// x-axis
+x_axis(
+    // commands
+    pcmd_enable := cmd_x_enable,
+    pcmd_disable := cmd_x_disable,
+    pcmd_home := cmd_x_home,
+    pcmd_reset_error := cmd_x_reset_error,
+    pcmd_move_absolute := cmd_x_move_absolute,
+    pcmd_stop := cmd_x_stop,
+	
+	// configuration
+	cfg_simulation_mode := cfg_simulation_mode,
+	cfg_position_tolerance := cfg_position_tolerance,
+	
+	// movement parameters
+	inp_target_position := inp_target_position.x,
+	inp_move_description := internal_move_desc_x
+);
+
+// y-axis
+y_axis(
+    // commands
+    pcmd_enable := cmd_y_enable,
+    pcmd_disable := cmd_y_disable,
+    pcmd_home := cmd_y_home,
+    pcmd_reset_error := cmd_y_reset_error,
+    pcmd_move_absolute := cmd_y_move_absolute,
+    pcmd_stop := cmd_y_stop,
+	
+	// configuration
+	cfg_simulation_mode := cfg_simulation_mode,
+	cfg_position_tolerance := cfg_position_tolerance,
+	
+	// movement parameters
+	inp_target_position := inp_target_position.y,
+	inp_move_description := internal_move_desc_y
+);
+
+// update status again after running motors
+Update_Status();
+
+Reset_Commands();]]></ST>
+    </Implementation>
+    <Method Name="Reset_Commands" Id="{c0b99eab-929b-44ed-a222-cea2e019891e}">
+      <Declaration><![CDATA[METHOD Reset_Commands : BOOL
+VAR_INPUT
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[// reset button presses one pulse per press
+IF pcmd_enable THEN pcmd_enable := FALSE; END_IF;
+IF pcmd_disable THEN pcmd_disable := FALSE; END_IF;
+IF pcmd_home THEN pcmd_home := FALSE; END_IF;
+IF pcmd_reset_error THEN pcmd_reset_error := FALSE; END_IF;
+IF pcmd_move_absolute THEN pcmd_move_absolute := FALSE; END_IF;
+IF pcmd_stop THEN pcmd_stop := FALSE; END_IF;]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="Update_Status" Id="{cb294b6f-b5e3-4041-8e32-d25d4ff0bb5c}">
+      <Declaration><![CDATA[METHOD Update_Status : BOOL
+VAR_INPUT
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[// update our current position
+sts.position.x := x_axis.sts.actual_position;
+sts.position.y := y_axis.sts.actual_position;
+sts.position.z := 0; // Z axis removed
+
+// update status (only what we can't determine from state)
+sts.all_homed := x_axis.sts.homed AND y_axis.sts.homed;
+
+// check if any axis has an error
+sts.has_error := x_axis.sts_State = E_Servo_State.ERRORED OR 
+                y_axis.sts_State = E_Servo_State.ERRORED;
+
+// set target position status - are we there yet?
+IF sts.state = E_Gantry_State.READY THEN
+    sts.at_position := 
+        x_axis.sts.at_position AND 
+        y_axis.sts.at_position;
+ELSIF sts.state <> E_Gantry_State.MOVING THEN
+    // when not moving or ready not at any target
+    sts.at_position := FALSE;
+END_IF;
+
+// set state text for hmi display
+CASE sts.state OF
+    E_Gantry_State.DISABLED:
+        sts.state_text := 'DISABLED';
+    E_Gantry_State.ENABLING:
+        sts.state_text := 'ENABLING';
+    E_Gantry_State.HOME_NEEDED:
+        sts.state_text := 'HOME NEEDED';
+    E_Gantry_State.HOMING:
+        sts.state_text := 'HOMING';
+    E_Gantry_State.READY:
+        sts.state_text := 'READY';
+    E_Gantry_State.MOVING:
+        sts.state_text := 'MOVING';
+    E_Gantry_State.STOPPING:
+        sts.state_text := 'STOPPING';
+    E_Gantry_State.ERRORED:
+        sts.state_text := 'ERROR';
+    E_Gantry_State.RESETTING:
+        sts.state_text := 'RESETTING';
+ELSE
+    sts.state_text := 'UNKNOWN';
+END_CASE;]]></ST>
+      </Implementation>
+    </Method>
+    <LineIds Name="FB_Gantry">
+      <LineId Id="5" Count="0" />
+      <LineId Id="4" Count="0" />
+      <LineId Id="248" Count="0" />
+      <LineId Id="6" Count="198" />
+    </LineIds>
+    <LineIds Name="FB_Gantry.Reset_Commands">
+      <LineId Id="6" Count="5" />
+      <LineId Id="5" Count="0" />
+    </LineIds>
+    <LineIds Name="FB_Gantry.Update_Status">
+      <LineId Id="6" Count="44" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

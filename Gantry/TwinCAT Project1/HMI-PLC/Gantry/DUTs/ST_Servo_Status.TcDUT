@@ -1,0 +1,25 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.13">
+  <DUT Name="ST_Servo_Status" Id="{f925de42-8e98-4797-aa60-fa1460fdb520}">
+    <Declaration><![CDATA[TYPE ST_Servo_Status :
+STRUCT
+	// These can be determined from state
+	error_id: DINT; // error code if error is present
+	
+	// Status flags that state doesn't indicate
+	homed: BOOL; // servo is homed/referenced
+	at_position: BOOL; // at target position 
+	at_home_position: BOOL; // at home position
+	
+	// Physical values
+	actual_position: LREAL; // current position
+	actual_velocity: LREAL; // current velocity
+	actual_torque: LREAL; // current torque
+	
+	// Display text
+	state_text: STRING; // text for hmi
+END_STRUCT
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>

@@ -1,0 +1,15 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.13">
+  <GVL Name="GVL" Id="{56c183bb-7b82-4bb8-9d91-b80c7b585b08}">
+    <Declaration><![CDATA[VAR_GLOBAL
+	// parts coordinates [part_index, coordinate_index]
+	// coordinate_index: 1=X_min, 2=Y_min, 3=X_max, 4=Y_max
+	Parts : ARRAY[1..4, 1..4] OF INT := [
+		30,  700, 180, 850,  // Part 1
+		650, 750, 750, 870,  // Part 2 
+		50,  20,  250, 120,  // Part 3
+		500, 500, 700, 550   // Part 4
+	];	
+END_VAR]]></Declaration>
+  </GVL>
+</TcPlcObject>

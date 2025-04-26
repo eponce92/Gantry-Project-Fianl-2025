@@ -1,0 +1,323 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.13">
+  <POU Name="FB_Servo" Id="{031c9ab2-c17f-4606-b054-bdeb243ae852}" SpecialFunc="None">
+    <Declaration><![CDATA[{attribute 'hide_all_locals'}
+FUNCTION_BLOCK FB_Servo
+VAR_IN_OUT
+	// button inputs
+	pcmd_enable: BOOL; // turn on motor
+	pcmd_disable: BOOL; // turn off motor
+	pcmd_home: BOOL; // find home position
+	pcmd_reset_error: BOOL; // clear errors
+	pcmd_move_absolute: BOOL; // go to exact position
+	pcmd_stop: BOOL; // stop moving
+END_VAR
+
+VAR_INPUT
+	// setup options
+	cfg_simulation_mode: BOOL := TRUE; // just simulate no hardware
+	cfg_home_position: LREAL := 0; // where home is
+	cfg_position_tolerance: LREAL := 0.05; // how close is close enough
+	
+	// movement inputs
+	inp_target_position: LREAL; // where to go
+	inp_Move_Description: ST_Move_Description; // how fast to get there
+END_VAR
+
+VAR_OUTPUT
+	// info for hmi and other functions
+	sts: ST_Servo_Status; // full status structure
+	sts_State: E_Servo_State; // current state
+	
+	// movement type flags
+	sts_absolute_move: BOOL; // going to exact position
+END_VAR
+
+VAR
+	// working variables
+	internal_target_position: LREAL; // where we headed
+	internal_sim_timer: TON; // for simulating movements
+	internal_sim_home_timer: TON; // for simulating homing
+	internal_sim_reset_timer: TON; // for simulating reset
+	internal_sim_stop_timer: TON; // for simulating stopping
+	internal_sim_move_time: TIME; // how long move takes
+	internal_error_timer: TON; // for simulating random errors
+	
+	// motion calculation vars
+	internal_start_position: LREAL; // where we started
+	internal_position_delta: LREAL; // how far to move
+	
+	// helpers
+	temp_ratio: LREAL; // for position interpolation
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[// errors trump everything else
+IF sts_State = E_Servo_State.ERRORED AND NOT pcmd_reset_error AND sts_State <> E_Servo_State.RESETTING THEN
+    // stuck in error until reset
+    sts_State := E_Servo_State.ERRORED;
+    
+    // nothing happens while in error
+ELSE
+    // main state machine
+    CASE sts_State OF
+        E_Servo_State.DISABLED: // power off
+            IF pcmd_enable AND sts_State <> E_Servo_State.ERRORED THEN
+                sts_State := E_Servo_State.ENABLING; // power up
+            END_IF
+            
+        E_Servo_State.ENABLING: // powering up
+            IF cfg_simulation_mode THEN
+                // pretend to power up
+                // dont know where we are yet
+                sts_State := E_Servo_State.HOME_NEEDED;
+            ELSE
+                // TODO: actually turn on real servo
+            END_IF
+            
+        E_Servo_State.HOME_NEEDED: // need to find home
+            // can either go home or shut down
+            IF pcmd_disable THEN
+                sts_State := E_Servo_State.DISABLED;
+            ELSIF pcmd_home THEN
+                sts_State := E_Servo_State.HOMING;
+                sts.homed := FALSE;
+                
+                IF cfg_simulation_mode THEN
+                    // pretend to home for 2 seconds
+                    internal_sim_home_timer(IN := FALSE); // reset timer
+                    internal_sim_home_timer(IN := TRUE, PT := T#2S); // start timer with 2s delay
+                END_IF
+            END_IF
+            
+        E_Servo_State.HOMING: // looking for home
+            IF pcmd_stop THEN
+                // cancelled homing
+                sts_State := E_Servo_State.HOME_NEEDED; // back to square one
+                RETURN;
+            END_IF
+            
+            IF cfg_simulation_mode THEN
+                // pretend to find home
+                internal_sim_home_timer();
+                
+                IF internal_sim_home_timer.Q THEN
+                    // found home
+                    sts.homed := TRUE;
+                    sts.actual_position := cfg_home_position;
+                    sts.at_home_position := TRUE;
+                    sts_State := E_Servo_State.READY; // good to go
+                END_IF
+            ELSE
+                // TODO: actually find home with real hardware
+            END_IF
+            
+        E_Servo_State.READY: // ready for action
+            IF pcmd_disable THEN
+                // shut it down
+                sts_State := E_Servo_State.DISABLED;
+            ELSIF pcmd_home THEN
+                // find home again
+                sts_State := E_Servo_State.HOMING;
+                sts.homed := FALSE;
+                
+                IF cfg_simulation_mode THEN
+                    // pretend to home again for 2 seconds
+                    internal_sim_home_timer(IN := FALSE); // reset timer
+                    internal_sim_home_timer(IN := TRUE, PT := T#2S); // start timer with 2s delay
+                END_IF
+            ELSIF pcmd_move_absolute THEN
+                // check if already there
+                IF ABS(inp_target_position - sts.actual_position) <= cfg_position_tolerance THEN
+                    // already here no need to move
+                    sts.at_position := TRUE;
+                ELSE
+                    // go to exact position
+                    internal_target_position := inp_target_position;
+                    internal_start_position := sts.actual_position;
+                    internal_position_delta := internal_target_position - internal_start_position;
+                    sts_State := E_Servo_State.MOVING;
+                    sts.at_position := FALSE;
+                    
+                    // set move type
+                    sts_absolute_move := TRUE;
+                    
+                    IF cfg_simulation_mode THEN
+                        // figure out how long move should take
+                        internal_sim_move_time := LREAL_TO_TIME(ABS(internal_position_delta) / 
+                                                              (inp_Move_Description.speed) * 1000);
+                        // make sure not too quick
+                        IF internal_sim_move_time < T#100MS THEN
+                            internal_sim_move_time := T#100MS;
+                        END_IF
+                        
+                        // set up move timer
+                        internal_sim_timer(IN := FALSE); // reset timer
+                        internal_sim_timer(IN := TRUE, PT := internal_sim_move_time); // start timer
+                    END_IF
+                END_IF
+            END_IF
+            
+        E_Servo_State.MOVING: // moving to target
+            // handle stop command
+            IF pcmd_stop THEN
+                sts_State := E_Servo_State.STOPPING;
+                // Keep position where it is - no need for timer
+                sts.actual_velocity := 0;
+                RETURN;
+            END_IF
+            
+            IF cfg_simulation_mode THEN
+                // fake the movement
+                internal_sim_timer();
+                
+                // calculate position during move
+                IF NOT internal_sim_timer.Q THEN
+                    // how far along are we
+                    // TIME_TO_REAL gives milliseconds
+                    temp_ratio := TIME_TO_REAL(internal_sim_timer.ET) / TIME_TO_REAL(internal_sim_move_time);
+                    
+                    // cap at 100%
+                    IF temp_ratio > 1.0 THEN 
+                        temp_ratio := 1.0;
+                    END_IF;
+                    
+                    // linear position: start + (distance * percentage)
+                    sts.actual_position := internal_start_position + (internal_position_delta * temp_ratio);
+                    sts.actual_velocity := inp_Move_Description.speed;
+                    sts.actual_torque := inp_Move_Description.max_torque * 0.5; // about half torque
+                ELSE
+                    // made it
+                    sts.actual_position := internal_target_position;
+                    sts.actual_velocity := 0;
+                    sts.actual_torque := 0;
+                    sts.at_position := TRUE;
+                    sts_State := E_Servo_State.READY; // back to ready
+                END_IF
+            ELSE
+                // TODO: move real motor to position
+            END_IF
+            
+        E_Servo_State.STOPPING: // stopping movement
+            // Immediately stop movement and transition to READY
+            sts.actual_velocity := 0;
+            sts_State := E_Servo_State.READY;
+            
+        E_Servo_State.ERRORED: // error condition
+            // reset button pressed
+            IF pcmd_reset_error THEN
+                sts_State := E_Servo_State.RESETTING;
+                
+                // set up reset timer
+                IF cfg_simulation_mode THEN
+                    internal_sim_reset_timer(IN := FALSE); // reset timer
+                    internal_sim_reset_timer(IN := TRUE, PT := T#1S); // start timer with 1s delay
+                END_IF
+            END_IF
+            
+        E_Servo_State.RESETTING: // clearing errors
+            // wait for reset to complete
+            IF cfg_simulation_mode THEN
+                internal_sim_reset_timer();
+                
+                IF internal_sim_reset_timer.Q THEN
+                    // all better now
+                    sts_State := E_Servo_State.DISABLED;
+                END_IF
+            ELSE
+                // TODO: actually reset hardware
+            END_IF
+    END_CASE
+END_IF;
+
+// set state text for hmi display
+CASE sts_State OF
+    E_Servo_State.DISABLED:
+        sts.state_text := 'DISABLED';
+    E_Servo_State.ENABLING:
+        sts.state_text := 'ENABLING';
+    E_Servo_State.HOME_NEEDED:
+        sts.state_text := 'HOME NEEDED';
+    E_Servo_State.HOMING:
+        sts.state_text := 'HOMING';
+    E_Servo_State.READY:
+        sts.state_text := 'READY';
+    E_Servo_State.MOVING:
+        IF sts_absolute_move THEN
+            sts.state_text := 'MOVING TO POSITION';
+        ELSE
+            sts.state_text := 'MOVING';
+        END_IF
+    E_Servo_State.STOPPING:
+        sts.state_text := 'STOPPING';
+    E_Servo_State.ERRORED:
+        sts.state_text := 'ERROR';
+    E_Servo_State.RESETTING:
+        sts.state_text := 'RESETTING';
+ELSE
+    sts.state_text := 'UNKNOWN';
+END_CASE;
+
+// check if at home
+sts.at_home_position := (ABS(sts.actual_position - cfg_home_position) < 0.001);
+
+// check if at target
+sts.at_position := (ABS(sts.actual_position - inp_target_position) <= cfg_position_tolerance);
+
+// reset button flags one press per command
+IF pcmd_enable THEN pcmd_enable := FALSE; END_IF;
+IF pcmd_disable THEN pcmd_disable := FALSE; END_IF;
+IF pcmd_home THEN pcmd_home := FALSE; END_IF;
+IF pcmd_reset_error THEN pcmd_reset_error := FALSE; END_IF;
+IF pcmd_move_absolute THEN pcmd_move_absolute := FALSE; END_IF;
+IF pcmd_stop THEN pcmd_stop := FALSE; END_IF;]]></ST>
+    </Implementation>
+    <Method Name="SimulateRandomErrors" Id="{6e90d6a3-4b47-48f6-992e-e86dfb16afd7}">
+      <Declaration><![CDATA[METHOD SimulateRandomErrors
+VAR_INPUT
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[(*
+we could get the error list form the drive manual and have an enum here to simulate different types
+of errors, show on the HMI and do error handling ahead of comissioning 
+
+*)
+
+
+// only in simulation mode and not in error state
+IF cfg_simulation_mode AND sts_State <> E_Servo_State.ERRORED THEN
+    // set up error timer random interval
+    internal_error_timer(IN := TRUE, PT := T#30S);
+    
+    // generate error after timer expires
+    IF internal_error_timer.Q THEN
+        sts.error_id := 1000; // generic error code
+        sts_State := E_Servo_State.ERRORED; // go to error state
+        
+        // reset timer
+        internal_error_timer(IN := FALSE);
+    END_IF
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <LineIds Name="FB_Servo">
+      <LineId Id="9" Count="0" />
+      <LineId Id="2" Count="0" />
+      <LineId Id="10" Count="29" />
+      <LineId Id="41" Count="97" />
+      <LineId Id="356" Count="31" />
+      <LineId Id="165" Count="55" />
+      <LineId Id="388" Count="0" />
+    </LineIds>
+    <LineIds Name="FB_Servo.SimulateRandomErrors">
+      <LineId Id="19" Count="0" />
+      <LineId Id="22" Count="0" />
+      <LineId Id="26" Count="0" />
+      <LineId Id="21" Count="0" />
+      <LineId Id="20" Count="0" />
+      <LineId Id="25" Count="0" />
+      <LineId Id="24" Count="0" />
+      <LineId Id="3" Count="13" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

@@ -1,0 +1,374 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.13">
+  <POU Name="MAIN" Id="{6fda7851-6be6-4301-a4d4-3c33a03aee8d}" SpecialFunc="None">
+    <Declaration><![CDATA[PROGRAM MAIN
+VAR
+	// Our gantry controller
+	my_gantry: FB_Gantry;
+	
+	
+	// Where to move to
+	target_position: ST_Position;
+	
+	// Speed settings
+	move_params: ST_Move_Description := (speed:= 5 , accel := 10, decel := 10, max_torque := 80);
+	
+	// HMI Tags
+	api_fromHMI : fromHMI;
+	api_toHMI : toHMI;
+
+	// Internal tags for gantry control
+	cmd_enable: BOOL;
+	cmd_disable: BOOL;
+	cmd_home: BOOL;
+	cmd_move_to_position: BOOL;
+	cmd_stop: BOOL;
+	cmd_reset_error: BOOL;
+	
+	// actuator command for pen ( TODO implement actuator FB )
+	cmd_penAdvance : BOOL := FALSE;
+	
+	// Process state machine
+	process_state : INT := 0;
+	selected_part : INT := 0;
+	drawing_complete : BOOL := FALSE;
+
+	
+	// Draw_Part method variables
+	draw_local_corner : INT := 1;
+	draw_local_wait_timer : TON;
+	draw_local_wait_time : TIME := T#500MS;
+	draw_local_state : INT := 0;
+	draw_local_done : BOOL := FALSE;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[// Update HMI at the top
+Update_HMI();
+
+my_gantry(
+    pcmd_enable := cmd_enable,
+    pcmd_disable := cmd_disable,
+    pcmd_home := cmd_home,
+    pcmd_move_absolute := cmd_move_to_position,
+    pcmd_stop := cmd_stop,
+    pcmd_reset_error := cmd_reset_error,
+
+    cfg_simulation_mode := TRUE,
+    inp_target_position := target_position,
+    inp_move_description := move_params
+);
+
+// Check if point from HMI is inside any part
+api_toHMI.stsPartSelected := Find_Part(
+        x := DINT_TO_LREAL(api_fromHMI.stsPointSelected[0]),
+        y := DINT_TO_LREAL(api_fromHMI.stsPointSelected[1]));
+
+// Main process state machine
+CASE process_state OF
+    0: // just starting up
+        // jump to idle
+        process_state := 10;
+        api_toHMI.stsState := 0;
+        
+    10: // chilling in idle
+        // grab selected part
+        selected_part := api_toHMI.stsPartSelected;
+        api_toHMI.stsState := 10;
+        
+        // handle start button
+        IF api_fromHMI.cmdStart AND selected_part > 0 THEN
+            // ready to rock if gantry is up
+            IF my_gantry.sts.state = E_Gantry_State.READY THEN
+                process_state := 20; // go draw
+                draw_local_state := 0; // reset drawer
+                draw_local_done := FALSE; // not done yet
+            ELSIF my_gantry.sts.state = E_Gantry_State.DISABLED THEN
+                // wake up gantry first
+                cmd_enable := TRUE;
+                process_state := 15; // power up sequence
+            END_IF;
+        END_IF;
+        
+    15: // getting gantry ready
+        api_toHMI.stsState := 15;
+        IF my_gantry.sts.state = E_Gantry_State.HOME_NEEDED THEN
+            cmd_home := TRUE;
+        ELSIF my_gantry.sts.state = E_Gantry_State.READY THEN
+            process_state := 10; // back to chilling
+        END_IF;
+        
+    16: // home sequence
+        api_toHMI.stsState := 16;
+        IF my_gantry.sts.state = E_Gantry_State.DISABLED THEN
+            cmd_enable := TRUE;
+        ELSIF my_gantry.sts.state = E_Gantry_State.HOME_NEEDED THEN
+            cmd_home := TRUE;
+        ELSIF my_gantry.sts.state = E_Gantry_State.READY THEN
+            process_state := 10; // back to idle
+        END_IF;
+        
+    20: // busy drawing
+        api_toHMI.stsState := 20;
+        drawing_complete := Draw_Part(selected_part);
+        
+        // finished the masterpiece
+        IF drawing_complete THEN
+            process_state := 10; // back to idle
+        END_IF;
+        
+    30: // emergency stop
+        api_toHMI.stsState := 30;
+        // hit the brakes
+        cmd_stop := TRUE;
+        // lift the pen
+        cmd_penAdvance := FALSE;
+        
+        // back to idle when stopped
+        IF my_gantry.sts.state = E_Gantry_State.READY THEN
+            process_state := 10; // back to idle
+        END_IF;
+END_CASE;
+
+// Global command handling (except during abort)
+IF process_state <> 30 THEN
+    // abort = stop everything
+    IF api_fromHMI.cmdAbort THEN
+        process_state := 30; // emergency stop
+    END_IF;
+    
+    // home button pressed
+    IF api_fromHMI.cmdHome THEN
+        // start home sequence
+        process_state := 16;
+    END_IF;
+    
+    // reset button clears errors
+    IF api_fromHMI.cmdReset THEN
+        cmd_reset_error := TRUE;
+    END_IF;
+END_IF;
+
+]]></ST>
+    </Implementation>
+    <Method Name="Draw_Part" Id="{65f6a28f-4627-49bc-a111-146c4455e3cd}">
+      <Declaration><![CDATA[METHOD Draw_Part : BOOL
+VAR_INPUT
+	part_to_draw : INT := 0;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[// If part doesn't exist, exit
+IF part_to_draw < 1 OR part_to_draw > 4 THEN
+    Draw_Part := FALSE;
+    RETURN;
+END_IF;
+
+// State machine for drawing the part
+CASE draw_local_state OF
+    0: // Initial state - Lift pen
+		draw_local_done := FALSE;
+        cmd_penAdvance := FALSE;
+        draw_local_state := 10;
+        
+    10: // Move to first corner (bottom left)
+        target_position.x := GVL.Parts[part_to_draw, 1]; // X_min
+        target_position.y := GVL.Parts[part_to_draw, 2]; // Y_min
+        cmd_move_to_position := TRUE;
+        draw_local_state := 20;
+        
+    20: // Wait for gantry to reach position
+        IF my_gantry.sts.at_position THEN
+            draw_local_state := 30;
+        END_IF;
+        
+    30: // Lower pen
+        cmd_penAdvance := TRUE;
+        draw_local_state := 40;
+        
+    40: // Move to second corner (bottom right)
+        target_position.x := GVL.Parts[part_to_draw, 3]; // X_max
+        target_position.y := GVL.Parts[part_to_draw, 2]; // Y_min
+        cmd_move_to_position := TRUE;
+        draw_local_state := 50;
+        
+    50: // Wait for gantry to reach position
+        IF my_gantry.sts.at_position THEN
+            draw_local_state := 60;
+        END_IF;
+        
+    60: // Move to third corner (top right)
+        target_position.x := GVL.Parts[part_to_draw, 3]; // X_max
+        target_position.y := GVL.Parts[part_to_draw, 4]; // Y_max
+        cmd_move_to_position := TRUE;
+        draw_local_state := 70;
+        
+    70: // Wait for gantry to reach position
+        IF my_gantry.sts.at_position THEN
+            draw_local_state := 80;
+        END_IF;
+        
+    80: // Move to fourth corner (top left)
+        target_position.x := GVL.Parts[part_to_draw, 1]; // X_min
+        target_position.y := GVL.Parts[part_to_draw, 4]; // Y_max
+        cmd_move_to_position := TRUE;
+        draw_local_state := 90;
+        
+    90: // Wait for gantry to reach position
+        IF my_gantry.sts.at_position THEN
+            draw_local_state := 100;
+        END_IF;
+        
+    100: // Move back to first corner (bottom left) to close the rectangle
+        target_position.x := GVL.Parts[part_to_draw, 1]; // X_min
+        target_position.y := GVL.Parts[part_to_draw, 2]; // Y_min
+        cmd_move_to_position := TRUE;
+        draw_local_state := 110;
+        
+    110: // Wait for gantry to reach position
+        IF my_gantry.sts.at_position THEN
+            draw_local_state := 120;
+        END_IF;
+        
+    120: // Lift pen and finish
+        cmd_penAdvance := FALSE;
+        draw_local_state := 130;
+        
+    130: // Drawing complete
+        draw_local_done := TRUE;
+        Draw_Part := TRUE;  // Return TRUE to indicate success
+        draw_local_state := 0;  // Reset for next drawing
+END_CASE;]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="Find_Part" Id="{c40e34ab-95dd-4d90-b2b4-21c2a450fab8}">
+      <Declaration><![CDATA[METHOD Find_Part : INT
+VAR_INPUT
+	x : LREAL;
+	y : LREAL;
+END_VAR
+VAR
+	i : INT;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[// Initialize return value to 0 (no part found)
+Find_Part := 0;
+
+// Loop through all parts to check if point is inside any of them
+FOR i := 1 TO 4 DO
+    // Check if point (x,y) is inside the part boundaries:
+    // x >= X_min AND x <= X_max AND y >= Y_min AND y <= Y_max
+    IF x >= GVL.Parts[i,1] AND x <= GVL.Parts[i,3] AND
+       y >= GVL.Parts[i,2] AND y <= GVL.Parts[i,4] THEN
+        Find_Part := i;
+        RETURN;
+    END_IF;
+END_FOR;]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="Update_HMI" Id="{cb863e90-33cc-45ae-9d6b-4be025a4b2f5}">
+      <Declaration><![CDATA[METHOD Update_HMI : BOOL
+VAR_INPUT
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[// Handle HMI commands
+IF api_fromHMI.cmdHome THEN
+    cmd_home := TRUE;
+    api_fromHMI.cmdHome := FALSE; // Reset the HMI command
+END_IF;
+
+IF api_fromHMI.cmdReset THEN
+    cmd_reset_error := TRUE;
+    api_fromHMI.cmdReset := FALSE; // Reset the HMI command
+END_IF;
+
+IF api_fromHMI.cmdAbort THEN
+    cmd_stop := TRUE;
+    cmd_disable := TRUE;
+    api_fromHMI.cmdAbort := FALSE; // Reset the HMI command
+END_IF;
+
+// cmdStart logic pending for future implementation
+
+// Update HMI status using Station_State enumeration
+CASE my_gantry.sts.state OF
+    E_Gantry_State.ERRORED: 
+        api_toHMI.stsController := Station_State.FAULTED;
+    E_Gantry_State.DISABLED, E_Gantry_State.STOPPING:
+        api_toHMI.stsController := Station_State.STOPPED;
+    E_Gantry_State.MOVING:
+        api_toHMI.stsController := Station_State.RUNNING;
+    E_Gantry_State.HOMING:
+        api_toHMI.stsController := Station_State.HOMING;
+    E_Gantry_State.ENABLING:
+        api_toHMI.stsController := Station_State.RUNNING;
+    E_Gantry_State.RESETTING:
+        api_toHMI.stsController := Station_State.RESETTING;
+    ELSE
+        api_toHMI.stsController := Station_State.IDLE;
+END_CASE;
+
+]]></ST>
+      </Implementation>
+    </Method>
+    <LineIds Name="MAIN">
+      <LineId Id="120" Count="0" />
+      <LineId Id="118" Count="1" />
+      <LineId Id="12" Count="0" />
+      <LineId Id="14" Count="4" />
+      <LineId Id="67" Count="0" />
+      <LineId Id="22" Count="1" />
+      <LineId Id="26" Count="0" />
+      <LineId Id="2" Count="0" />
+      <LineId Id="27" Count="0" />
+      <LineId Id="30" Count="0" />
+      <LineId Id="83" Count="0" />
+      <LineId Id="19" Count="0" />
+      <LineId Id="124" Count="0" />
+      <LineId Id="21" Count="0" />
+      <LineId Id="127" Count="1" />
+      <LineId Id="64" Count="1" />
+      <LineId Id="130" Count="0" />
+    </LineIds>
+    <LineIds Name="MAIN.Draw_Part">
+      <LineId Id="5" Count="0" />
+      <LineId Id="7" Count="0" />
+      <LineId Id="10" Count="0" />
+      <LineId Id="9" Count="0" />
+      <LineId Id="14" Count="1" />
+      <LineId Id="12" Count="0" />
+      <LineId Id="19" Count="0" />
+      <LineId Id="18" Count="0" />
+      <LineId Id="96" Count="0" />
+      <LineId Id="20" Count="0" />
+      <LineId Id="13" Count="0" />
+      <LineId Id="11" Count="0" />
+      <LineId Id="17" Count="0" />
+      <LineId Id="16" Count="0" />
+      <LineId Id="22" Count="0" />
+      <LineId Id="21" Count="0" />
+      <LineId Id="23" Count="0" />
+      <LineId Id="27" Count="2" />
+      <LineId Id="26" Count="0" />
+      <LineId Id="24" Count="1" />
+      <LineId Id="82" Count="3" />
+      <LineId Id="30" Count="51" />
+      <LineId Id="2" Count="0" />
+    </LineIds>
+    <LineIds Name="MAIN.Find_Part">
+      <LineId Id="5" Count="0" />
+      <LineId Id="4" Count="0" />
+      <LineId Id="15" Count="0" />
+      <LineId Id="6" Count="8" />
+      <LineId Id="2" Count="0" />
+    </LineIds>
+    <LineIds Name="MAIN.Update_HMI">
+      <LineId Id="6" Count="32" />
+      <LineId Id="5" Count="0" />
+      <LineId Id="40" Count="1" />
+      <LineId Id="39" Count="0" />
+      <LineId Id="2" Count="0" />
+    </LineIds>
+  </POU>
+</TcPlcObject>
