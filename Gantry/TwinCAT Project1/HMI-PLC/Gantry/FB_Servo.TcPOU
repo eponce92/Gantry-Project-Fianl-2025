@@ -51,7 +51,7 @@ VAR
 	temp_ratio: LREAL; // for position interpolation
 END_VAR]]></Declaration>
     <Implementation>
-      <ST><![CDATA[// errors trump everything else
+      <ST><![CDATA[    // errors trump everything else
 IF sts_State = E_Servo_State.ERRORED AND NOT pcmd_reset_error AND sts_State <> E_Servo_State.RESETTING THEN
     // stuck in error until reset
     sts_State := E_Servo_State.ERRORED;
@@ -63,6 +63,7 @@ ELSE
         E_Servo_State.DISABLED: // power off
             IF pcmd_enable AND sts_State <> E_Servo_State.ERRORED THEN
                 sts_State := E_Servo_State.ENABLING; // power up
+                // Commands will be reset by the calling FB
             END_IF
             
         E_Servo_State.ENABLING: // powering up
@@ -78,6 +79,7 @@ ELSE
             // can either go home or shut down
             IF pcmd_disable THEN
                 sts_State := E_Servo_State.DISABLED;
+                // Commands will be reset by the calling FB
             ELSIF pcmd_home THEN
                 sts_State := E_Servo_State.HOMING;
                 sts.homed := FALSE;
@@ -87,12 +89,14 @@ ELSE
                     internal_sim_home_timer(IN := FALSE); // reset timer
                     internal_sim_home_timer(IN := TRUE, PT := T#2S); // start timer with 2s delay
                 END_IF
+                // Commands will be reset by the calling FB
             END_IF
             
         E_Servo_State.HOMING: // looking for home
             IF pcmd_stop THEN
                 // cancelled homing
                 sts_State := E_Servo_State.HOME_NEEDED; // back to square one
+                // Commands will be reset by the calling FB
                 RETURN;
             END_IF
             
@@ -115,6 +119,7 @@ ELSE
             IF pcmd_disable THEN
                 // shut it down
                 sts_State := E_Servo_State.DISABLED;
+                // Commands will be reset by the calling FB
             ELSIF pcmd_home THEN
                 // find home again
                 sts_State := E_Servo_State.HOMING;
@@ -125,11 +130,13 @@ ELSE
                     internal_sim_home_timer(IN := FALSE); // reset timer
                     internal_sim_home_timer(IN := TRUE, PT := T#2S); // start timer with 2s delay
                 END_IF
+                // Commands will be reset by the calling FB
             ELSIF pcmd_move_absolute THEN
                 // check if already there
                 IF ABS(inp_target_position - sts.actual_position) <= cfg_position_tolerance THEN
                     // already here no need to move
                     sts.at_position := TRUE;
+                    // Commands will be reset by the calling FB
                 ELSE
                     // go to exact position
                     internal_target_position := inp_target_position;
@@ -154,6 +161,7 @@ ELSE
                         internal_sim_timer(IN := FALSE); // reset timer
                         internal_sim_timer(IN := TRUE, PT := internal_sim_move_time); // start timer
                     END_IF
+                    // Command will be reset when move completes
                 END_IF
             END_IF
             
@@ -163,6 +171,7 @@ ELSE
                 sts_State := E_Servo_State.STOPPING;
                 // Keep position where it is - no need for timer
                 sts.actual_velocity := 0;
+                // Commands will be reset by the calling FB
                 RETURN;
             END_IF
             
@@ -192,6 +201,7 @@ ELSE
                     sts.actual_torque := 0;
                     sts.at_position := TRUE;
                     sts_State := E_Servo_State.READY; // back to ready
+                    // Command will be reset by the calling FB when it detects move completion
                 END_IF
             ELSE
                 // TODO: move real motor to position
@@ -212,6 +222,7 @@ ELSE
                     internal_sim_reset_timer(IN := FALSE); // reset timer
                     internal_sim_reset_timer(IN := TRUE, PT := T#1S); // start timer with 1s delay
                 END_IF
+                // Commands will be reset by the calling FB
             END_IF
             
         E_Servo_State.RESETTING: // clearing errors
@@ -263,13 +274,7 @@ sts.at_home_position := (ABS(sts.actual_position - cfg_home_position) < 0.001);
 // check if at target
 sts.at_position := (ABS(sts.actual_position - inp_target_position) <= cfg_position_tolerance);
 
-// reset button flags one press per command
-IF pcmd_enable THEN pcmd_enable := FALSE; END_IF;
-IF pcmd_disable THEN pcmd_disable := FALSE; END_IF;
-IF pcmd_home THEN pcmd_home := FALSE; END_IF;
-IF pcmd_reset_error THEN pcmd_reset_error := FALSE; END_IF;
-IF pcmd_move_absolute THEN pcmd_move_absolute := FALSE; END_IF;
-IF pcmd_stop THEN pcmd_stop := FALSE; END_IF;]]></ST>
+]]></ST>
     </Implementation>
     <Method Name="SimulateRandomErrors" Id="{6e90d6a3-4b47-48f6-992e-e86dfb16afd7}">
       <Declaration><![CDATA[METHOD SimulateRandomErrors
@@ -308,6 +313,9 @@ END_IF]]></ST>
       <LineId Id="356" Count="31" />
       <LineId Id="165" Count="55" />
       <LineId Id="388" Count="0" />
+      <LineId Id="222" Count="2" />
+      <LineId Id="227" Count="0" />
+      <LineId Id="389" Count="0" />
     </LineIds>
     <LineIds Name="FB_Servo.SimulateRandomErrors">
       <LineId Id="19" Count="0" />

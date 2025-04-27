@@ -31,6 +31,11 @@
               <l n="LanguageTexts" t="ArrayList" />
             </o>
             <o>
+              <v n="TextID">"732"</v>
+              <v n="TextDefault">"Comissioning seccion ( No part of API requirements )"</v>
+              <l n="LanguageTexts" t="ArrayList" />
+            </o>
+            <o>
               <v n="TextID">"24"</v>
               <v n="TextDefault">"Controller Status"</v>
               <l n="LanguageTexts" t="ArrayList" />
@@ -53,6 +58,11 @@
             <o>
               <v n="TextID">"533"</v>
               <v n="TextDefault">"ENABLE"</v>
+              <l n="LanguageTexts" t="ArrayList" />
+            </o>
+            <o>
+              <v n="TextID">"348"</v>
+              <v n="TextDefault">"Gantry State"</v>
               <l n="LanguageTexts" t="ArrayList" />
             </o>
             <o>
