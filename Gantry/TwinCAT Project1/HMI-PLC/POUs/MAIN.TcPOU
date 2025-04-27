@@ -48,6 +48,9 @@ IF api_fromHMI.cmdAbort AND station_sequence < 400 THEN
     station_sequence := 400; // Jump to abort sequence
 END_IF;
 
+// Always update the HMI with current step number
+api_toHMI.stsState := station_sequence;
+
 CASE station_sequence OF
 	
 // INITIALIZATION (0-99)
@@ -68,21 +71,18 @@ CASE station_sequence OF
 	
 // HOMING SEQUENCE (100-199)
 100: // Start homing sequence
-    api_toHMI.stsState := 100;
     api_toHMI.stsController := INT#4; // HOMING
     gantry_cmd_home := TRUE;
     station_sequence := 110;
     
 110: // Wait for home to complete
-    api_toHMI.stsState := 110;
-	IF my_gantry.sts.state = E_Gantry_State.READY THEN
-		station_sequence := 200; // Move to idle/ready state
-	END_IF
+    IF my_gantry.sts.state = E_Gantry_State.READY THEN
+        station_sequence := 200; // Move to idle/ready state
+    END_IF
 
 // IDLE AND OPERATION (200-399)
 200: // This is normal IDLE state, we wait for a start command from the HMI
     api_toHMI.stsController := INT#2; // IDLE
-    api_toHMI.stsState := 200;
     
     IF api_fromHMI.cmdHome THEN
         // Request homing sequence
@@ -97,8 +97,7 @@ CASE station_sequence OF
     END_IF
 
 210: // Start drawing - move to first corner of the part (X_min, Y_min)
-    api_toHMI.stsState := 210;
-	api_fromHMI.cmdStart := FALSE;
+    api_fromHMI.cmdStart := FALSE;
 	
     target_position.x := INT_TO_LREAL(GVL.Parts[api_toHMI.stsPartSelected, 1]);
     target_position.y := INT_TO_LREAL(GVL.Parts[api_toHMI.stsPartSelected, 2]);
@@ -232,7 +231,6 @@ CASE station_sequence OF
 
 // ABORT SEQUENCE (400-499)
 400: // First step of abort - check gantry state and take appropriate action
-    api_toHMI.stsState := 400;
     api_fromHMI.cmdAbort := FALSE; // Clear abort flag
     cmd_penAdvance := FALSE; // Raise pen
     
@@ -274,7 +272,6 @@ CASE station_sequence OF
     END_IF
 
 440: // Wait for home command from HMI
-    api_toHMI.stsState := 440;
     api_toHMI.stsController := INT#3; // FAULTED
     
     IF api_fromHMI.cmdHome THEN
