@@ -231,16 +231,34 @@ CASE station_sequence OF
     END_IF
 
 // ABORT SEQUENCE (400-499)
-400: // First step of abort - send stop command to the gantry
+400: // First step of abort - check gantry state and take appropriate action
     api_toHMI.stsState := 400;
     api_fromHMI.cmdAbort := FALSE; // Clear abort flag
     cmd_penAdvance := FALSE; // Raise pen
-    gantry_cmd_stop := TRUE;
-    station_sequence := 410;
+    
+    // Check if gantry is moving or homing - if so, we need to stop first
+    IF my_gantry.sts.state = E_Gantry_State.MOVING OR 
+       my_gantry.sts.state = E_Gantry_State.STOPPING OR
+       my_gantry.sts.state = E_Gantry_State.HOMING THEN
+        gantry_cmd_stop := TRUE;
+        station_sequence := 410;
+    ELSIF my_gantry.sts.state = E_Gantry_State.READY OR
+          my_gantry.sts.state = E_Gantry_State.HOME_NEEDED THEN
+        // Already stopped, go directly to disable
+        gantry_cmd_disable := TRUE;
+        station_sequence := 430;
+    ELSIF my_gantry.sts.state = E_Gantry_State.DISABLED THEN
+        // Already disabled, go to wait for home state
+        station_sequence := 440;
+    ELSE
+        // In any other state (ENABLING, ERRORED, RESETTING), 
+        // try to disable anyway
+        gantry_cmd_disable := TRUE;
+        station_sequence := 430;
+    END_IF
 
 410: // Wait for gantry to start stopping
     IF my_gantry.sts.state = E_Gantry_State.STOPPING THEN
-        gantry_cmd_stop := FALSE;
         station_sequence := 420;
     END_IF
 
@@ -250,18 +268,21 @@ CASE station_sequence OF
         station_sequence := 430;
     END_IF
 
-430: // Wait for gantry to start disabling
+430: // Wait for gantry to disable
     IF my_gantry.sts.state = E_Gantry_State.DISABLED THEN
-        gantry_cmd_disable := FALSE;
         station_sequence := 440;
     END_IF
 
 440: // Wait for home command from HMI
     api_toHMI.stsState := 440;
+    api_toHMI.stsController := INT#3; // FAULTED
     
     IF api_fromHMI.cmdHome THEN
         api_fromHMI.cmdHome := FALSE;
         station_sequence := 0; // Return to beginning to restart the sequence
+    ELSIF api_fromHMI.cmdReset THEN
+        api_fromHMI.cmdReset := FALSE;
+        station_sequence := 0; // Alternative way to restart
     END_IF
 	 
 END_CASE

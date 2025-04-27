@@ -3500,7 +3500,7 @@
                     </o>
                     <o>
                       <v n="Id">2477733581L</v>
-                      <v n="Value">"MAIN.api_toHMI.stsState"</v>
+                      <v n="Value">"MAIN.api_toHMI.stsController"</v>
                     </o>
                     <o>
                       <v n="Id">2597686782L</v>
