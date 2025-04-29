@@ -6,7 +6,6 @@ I added a simple HMI using TwinCAT web visualizations to test it.
 
 https://github.com/user-attachments/assets/7676de2d-4889-4ad8-88b4-3415e1e17090
 
-
 For final integration with any OPC UA based HMI program I exposed the relevant tags.
 
 ## Challenge Details
@@ -60,6 +59,7 @@ Here are the key files if you want to dig into the code:
 
 - [FB_Gantry](Gantry/TwinCAT%20Project1/HMI-PLC/Gantry/FB_Gantry.TcPOU) - Controls the whole gantry
 - [FB_Servo](Gantry/TwinCAT%20Project1/HMI-PLC/Gantry/FB_Servo.TcPOU) - Handles each axis
+- [MAIN](Gantry/TwinCAT%20Project1/HMI-PLC/POUs/MAIN.TcPOU) - Main program with state machine sequence
 
 ### Data Structures
 
@@ -69,3 +69,12 @@ Here are the key files if you want to dig into the code:
 - [ST_Servo_Status](Gantry/TwinCAT%20Project1/HMI-PLC/Gantry/DUTs/ST_Servo_Status.TcDUT) - Servo status
 - [ST_Position](Gantry/TwinCAT%20Project1/HMI-PLC/Gantry/DUTs/ST_Position.TcDUT) - XYZ coordinates
 - [ST_Move_Description](Gantry/TwinCAT%20Project1/HMI-PLC/Gantry/DUTs/ST_Move_Description.TcDUT) - Motion settings
+- [Station_State](Gantry/TwinCAT%20Project1/HMI-PLC/POUs/DUTs/Station_State.TcDUT) - Station controller states
+- [fromHMI](Gantry/TwinCAT%20Project1/HMI-PLC/POUs/DUTs/fromHMI.TcDUT) - HMI to PLC interface structure
+- [toHMI](Gantry/TwinCAT%20Project1/HMI-PLC/POUs/DUTs/toHMI.TcDUT) - PLC to HMI interface structure
+
+### HMI Components
+
+- [HMI](Gantry/TwinCAT%20Project1/HMI-PLC/POUs/HMI.TcVIS) - HMI visualization
+- [VisualizationManager](Gantry/TwinCAT%20Project1/HMI-PLC/POUs/VisualizationManager.TcVMO) - Visualization manager
+- [GVL](Gantry/TwinCAT%20Project1/HMI-PLC/GVL.TcGVL) - Global variable list with part coordinates
