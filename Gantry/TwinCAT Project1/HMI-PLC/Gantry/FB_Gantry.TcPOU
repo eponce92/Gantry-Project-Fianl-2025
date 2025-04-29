@@ -86,6 +86,9 @@ ELSE
             // when disabled we can only enable
             IF pcmd_enable AND NOT sts.has_error THEN
                 sts.state := E_Gantry_State.ENABLING;
+                
+                // Reset this command since we processed it
+                pcmd_enable := FALSE;
             END_IF
             
         E_Gantry_State.ENABLING:
@@ -107,12 +110,18 @@ ELSE
                 // tell all axes to find home
                 cmd_x_home := TRUE;
                 cmd_y_home := TRUE;
+                
+                // Reset this command since we processed it
+                pcmd_home := FALSE;
             ELSIF pcmd_disable THEN
                 sts.state := E_Gantry_State.DISABLED;
                 
                 // turn everything off
                 cmd_x_disable := TRUE;
                 cmd_y_disable := TRUE;
+                
+                // Reset this command since we processed it
+                pcmd_disable := FALSE;
             END_IF
             
         E_Gantry_State.HOMING:
@@ -123,6 +132,9 @@ ELSE
                 // tell all axes to halt
                 cmd_x_stop := TRUE;
                 cmd_y_stop := TRUE;
+                
+                // Reset this command since we processed it
+                pcmd_stop := FALSE;
             
             // when all axes found home good to go
             ELSIF sts.all_homed AND 
@@ -149,6 +161,9 @@ ELSE
                 // turn everything off
                 cmd_x_disable := TRUE;
                 cmd_y_disable := TRUE;
+                
+                // Reset this command since we processed it
+                pcmd_disable := FALSE;
             
             // rehome if needed
             ELSIF pcmd_home THEN
@@ -158,6 +173,9 @@ ELSE
                 cmd_x_home := TRUE;
                 cmd_y_home := TRUE;
                 
+                // Reset this command since we processed it
+                pcmd_home := FALSE;
+                
             // go to exact position
             ELSIF pcmd_move_absolute AND sts.all_homed THEN
                 // check if position is within limits
@@ -165,6 +183,9 @@ ELSE
                    inp_target_position.y > cfg_max_y OR inp_target_position.y < 0 THEN
                     // position out of bounds - do not move
                     // could set an error flag here
+                    
+                    // Reset command since we can't process it
+                    pcmd_move_absolute := FALSE;
                 ELSE
                     // check if already there
                     sts.at_position := 
@@ -174,6 +195,9 @@ ELSE
                     IF sts.at_position THEN
                         // already there nothing to do
                         sts.at_position := TRUE;
+                        
+                        // Reset command since we're already there
+                        pcmd_move_absolute := FALSE;
                     ELSE
                         sts.state := E_Gantry_State.MOVING;
                         sts.at_position := FALSE;
@@ -181,6 +205,8 @@ ELSE
                         // tell all axes where to go
                         cmd_x_move_absolute := TRUE;
                         cmd_y_move_absolute := TRUE;
+                        
+                        // Don't reset command here - let it be reset after the move completes
                     END_IF
                 END_IF
             END_IF
@@ -193,11 +219,17 @@ ELSE
                 // tell all axes to halt
                 cmd_x_stop := TRUE;
                 cmd_y_stop := TRUE;
+                
+                // Reset this command since we processed it
+                pcmd_stop := FALSE;
             
             // when motion complete back to ready
             ELSIF x_axis.sts_State <> E_Servo_State.MOVING AND 
                   y_axis.sts_State <> E_Servo_State.MOVING THEN
                 sts.state := E_Gantry_State.READY;
+                
+                // Now that the move is complete, reset the move command
+                pcmd_move_absolute := FALSE;
             END_IF
             
         E_Gantry_State.STOPPING:
@@ -215,6 +247,9 @@ ELSE
                 // tell all axes to clear errors
                 cmd_x_reset_error := TRUE;
                 cmd_y_reset_error := TRUE;
+                
+                // Reset this command since we processed it
+                pcmd_reset_error := FALSE;
             END_IF
             
         E_Gantry_State.RESETTING:
@@ -267,23 +302,21 @@ y_axis(
 // update status again after running motors
 Update_Status();
 
-Reset_Commands();]]></ST>
+// Reset the local axis command flags since they have been processed
+cmd_x_enable := FALSE;
+cmd_x_disable := FALSE;
+cmd_x_home := FALSE;
+cmd_x_reset_error := FALSE;
+cmd_x_move_absolute := FALSE;
+cmd_x_stop := FALSE;
+
+cmd_y_enable := FALSE;
+cmd_y_disable := FALSE;
+cmd_y_home := FALSE;
+cmd_y_reset_error := FALSE;
+cmd_y_move_absolute := FALSE;
+cmd_y_stop := FALSE;]]></ST>
     </Implementation>
-    <Method Name="Reset_Commands" Id="{c0b99eab-929b-44ed-a222-cea2e019891e}">
-      <Declaration><![CDATA[METHOD Reset_Commands : BOOL
-VAR_INPUT
-END_VAR
-]]></Declaration>
-      <Implementation>
-        <ST><![CDATA[// reset button presses one pulse per press
-IF pcmd_enable THEN pcmd_enable := FALSE; END_IF;
-IF pcmd_disable THEN pcmd_disable := FALSE; END_IF;
-IF pcmd_home THEN pcmd_home := FALSE; END_IF;
-IF pcmd_reset_error THEN pcmd_reset_error := FALSE; END_IF;
-IF pcmd_move_absolute THEN pcmd_move_absolute := FALSE; END_IF;
-IF pcmd_stop THEN pcmd_stop := FALSE; END_IF;]]></ST>
-      </Implementation>
-    </Method>
     <Method Name="Update_Status" Id="{cb294b6f-b5e3-4041-8e32-d25d4ff0bb5c}">
       <Declaration><![CDATA[METHOD Update_Status : BOOL
 VAR_INPUT
@@ -342,10 +375,6 @@ END_CASE;]]></ST>
       <LineId Id="4" Count="0" />
       <LineId Id="248" Count="0" />
       <LineId Id="6" Count="198" />
-    </LineIds>
-    <LineIds Name="FB_Gantry.Reset_Commands">
-      <LineId Id="6" Count="5" />
-      <LineId Id="5" Count="0" />
     </LineIds>
     <LineIds Name="FB_Gantry.Update_Status">
       <LineId Id="6" Count="44" />

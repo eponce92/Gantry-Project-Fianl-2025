@@ -4,7 +4,8 @@ This is a draft implementation for a 2-axis gantry control system with a pen act
 
 I added a simple HMI using TwinCAT web visualizations to test it.
 
-https://github.com/user-attachments/assets/61ed5064-98b7-4e53-a83c-56f44dd9559f
+https://github.com/user-attachments/assets/7676de2d-4889-4ad8-88b4-3415e1e17090
+
 
 For final integration with any OPC UA based HMI program I exposed the relevant tags.
 
